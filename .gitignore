@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+
+# IDE/editor
+
+# FAISS index and pickle files
+*.faiss
+*.pkl
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Docker
+*.lock
+
+# Data
+
+/data/
+/training_data/
+/models/
+*.tar
+*.csv.gz
+*.csv.xz
+shoptalk_ai.egg-info/
+.adk/
+
+
+
+# Misc
+
+.env
+mobileclip_data_*.tar
+
+# Git
+.git

@@ -1,0 +1,10 @@
+torch>=2.2.0
+open_clip_torch>=2.23.0
+transformers>=4.40.0
+peft>=0.10.0
+datasets>=2.19.0
+accelerate>=0.29.0
+numpy>=1.26.0
+pillow>=10.3.0
+tqdm>=4.66.2
+pandas>=2.2.2
