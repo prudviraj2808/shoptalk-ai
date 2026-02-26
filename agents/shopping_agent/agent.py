@@ -1,29 +1,28 @@
 import os
+import litellm  # Import the base library to set global flags
 from dotenv import load_dotenv
 from google.adk.agents import LlmAgent
 from google.adk.models.lite_llm import LiteLlm
-
-# 1. Import your tool class 
-# Ensure your file is named product_search.py or match the filename
 from tools.product_search import ProductSearchTool
 
 load_dotenv()
 
-# SageMaker Llama endpoint configuration
+# --- FIX 1: Set global LiteLLM behavior ---
+# This tells LiteLLM to strip the 'tools' parameter before sending it to SageMaker
+litellm.drop_params = True 
+
 ENDPOINT_NAME = os.environ.get("ENDPOINT_NAME", "your-llama-endpoint-name")
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 
-# Initialize the LiteLlm model pointing to your SageMaker endpoint
+# --- FIX 2: Pass allowed params to the Model Instance ---
 model = LiteLlm(
     model=f"sagemaker/{ENDPOINT_NAME}",
     aws_region_name=AWS_REGION,
+    # Some ADK versions prefer the param passed here as well
+    drop_params=True 
 )
 
-# 2. Initialize the search engine (Loads FAISS & MobileCLIP once)
 search_engine = ProductSearchTool()
-
-# 3. Define the Tool Functions for the ADK
-# We separate them so the LLM knows which one to call based on input type
 
 def search_by_text(query: str):
     """
@@ -40,8 +39,6 @@ def search_by_image(image_path: str):
     """
     return search_engine.search_image(image_path, top_k=3)
 
-# 4. ShopTalk Agent Definition
-# 
 root_agent = LlmAgent(
     name="ShopTalk",
     model=model,
