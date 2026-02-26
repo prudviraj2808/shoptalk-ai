@@ -1,5 +1,4 @@
 services:
-  # --- Postgres Database with pgvector ---
   db:
     image: pgvector/pgvector:pg16
     container_name: shoptalk-db
@@ -18,40 +17,26 @@ services:
       timeout: 5s
       retries: 5
 
-  # --- ShopTalk AI FastAPI App ---
-  app:
+  shoptalk:
     build:
       context: .
       dockerfile: docker/Dockerfile
     container_name: shoptalk-app
     restart: unless-stopped
-    # Pointing to main:app because main.py is in your root directory
-    command: ["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+    # Executes our combined script
+    command: ["/bin/bash", "./start.sh"]
     ports:
-      - "8000:8000"
+      - "8000:8000" # FastAPI
+      - "5000:5000" # ADK UI
     env_file:
       - .env
+    environment:
+      # Double-reinforces the path for the Python interpreter
+      - PYTHONPATH=/app
     volumes:
-      - .:/app  # Maps entire root (including tools, agents, model) into the container
-    depends_on:
-      db:
-        condition: service_healthy
-
-  # --- ADK Development UI ---
-  adk-ui:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile
-    container_name: shoptalk-adk-ui
-    restart: unless-stopped
-    # Limited to the agents/ folder as requested
-    command: ["uv", "run", "adk", "web", "--host", "0.0.0.0", "--port", "5000", "agents/"]
-    ports:
-      - "5000:5000"
-    env_file:
-      - .env
-    volumes:
-      - .:/app # Needs root access to import tools/product_search.py
+      - .:/app
+      # overwriting the Linux .venv inside the container
+      - /app/.venv
     depends_on:
       db:
         condition: service_healthy
