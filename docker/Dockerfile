@@ -1,46 +1,51 @@
-FROM python:3.12-slim
+# --- Stage 1: Build Stage ---
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS builder
 
-# Set environment variables
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    # Ensure uv-installed binaries are in the PATH
-    PATH="/app/.venv/bin:$PATH" \
-    # Critical: Ensure Python searches the root for your modules
-    PYTHONPATH="/app"
+# 1. Force uv to create the venv in a predictable location
+ENV UV_PROJECT_ENVIRONMENT=/app/.venv \
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy
 
 WORKDIR /app
 
-# Install system dependencies
-# Added: libopenblas-dev and libomp-dev for FAISS support
-RUN apt-get update && apt-get install -y \
-    curl \
-    build-essential \
-    libopenblas-dev \
-    libomp-dev \
+# 2. Install build-essential for FAISS/ML compilation
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential libopenblas-dev libomp-dev git \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv
-RUN curl -Ls https://astral.sh/uv/install.sh | sh \
-    && mv /root/.local/bin/uv /usr/local/bin/uv
-
-# Copy dependency metadata first to leverage Docker caching
+# 3. Copy only dependency files first for layer caching
 COPY pyproject.toml uv.lock ./
 
-# Install dependencies into a virtual environment
-# We do this before copying the rest of the code to speed up rebuilds
-RUN uv sync --frozen --no-dev
+# 4. Install dependencies (frozen)
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-install-project
 
-# Copy the actual project structure
-# Based on your flat layout, we copy these specific directories
-COPY agents ./agents
-COPY tools ./tools
-COPY utils ./utils
-COPY model ./model
-COPY main.py .env ./
+# --- Stage 2: Runtime Stage ---
+FROM python:3.12-slim-bookworm
+WORKDIR /app
 
-# Expose ports for both the API (8000) and ADK UI (5000)
+# 5. Install runtime libraries for FAISS (smaller than build-essential)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libopenblas0 libomp5 && rm -rf /var/lib/apt/lists/*
+
+# 6. COPY YOUR CODE FIRST 
+# This ensures the folder structure exists before the venv is moved in
+COPY . .
+
+# 7. COPY THE VENV FROM THE BUILDER
+# This overwrites any local .venv that might have accidentally slipped in
+COPY --from=builder /app/.venv /app/.venv
+
+# 8. Set System Paths
+# Putting the venv bin at the start of PATH makes 'uvicorn' accessible
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONPATH="/app" \
+    PYTHONUNBUFFERED=1
+
+# 9. Fix permissions for the startup script
+RUN chmod +x start.sh
+
 EXPOSE 8000
-EXPOSE 5000
 
-# Default command: Start the ADK UI pointing to the agents folder
-CMD ["uv", "run", "adk", "web", "--host", "0.0.0.0", "--port", "5000", "agents/"]
+# 10. Start the backend
+CMD ["./start.sh"]

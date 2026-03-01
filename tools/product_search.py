@@ -1,54 +1,125 @@
+import os
 import faiss
 import pickle
-import numpy as np
 import torch
-import mobileclip
-from google_adk.types import Tool # Adjust based on your ADK version
+import open_clip
+from PIL import Image
+from timm.utils import reparameterize_model
+from peft import PeftModel
+
 
 class ProductSearchTool:
-    def __init__(self, index_path="shoptalk_index.faiss", meta_path="metadata.pkl"):
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.index = faiss.read_index(index_path)
-        
-        with open(meta_path, "rb") as f:
-            self.metadata = pickle.load(f)
-            
-        # Load your MobileCLIP model
-        # Note: Ensure the model path matches your local unzipped folder
-        self.model, _, _ = mobileclip.create_model_and_transforms(
-            'mobileclip_s0', 
-            pretrained='./mobileclip2_lora'
-        )
-        self.model.to(self.device)
-        self.model.eval()
+    _instance = None
+    _initialized = False
 
-    def search(self, query: str, top_k: int = 3):
-        """
-        Search for clothing and fashion products based on a natural language description.
-        Args:
-            query: A descriptive string (e.g., 'blue denim jacket' or 'floral summer dress').
-            top_k: Number of products to return.
-        Returns:
-            A list of matching products with their captions.
-        """
-        # Encode text to embedding
-        text_tokens = mobileclip.tokenize([query]).to(self.device)
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self):
+        if ProductSearchTool._initialized:
+            return
+
+        print("🔥 Initializing ProductSearchTool...")
+
+        BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
+        self.index_path = os.path.join(BASE_DIR, "shoptalk_index.faiss")
+        self.meta_path = os.path.join(BASE_DIR, "metadata.pkl")
+        self.lora_dir = os.path.join(BASE_DIR, "model", "mobileclip2_lora")
+
+        # -------- Device --------
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.dtype = torch.float16 if self.device == "cuda" else torch.float32
+
+        print(f"📦 Loading on {self.device}")
+
+        # -------- Load FAISS --------
+        self.index = faiss.read_index(self.index_path)
+
+        # -------- Load Metadata --------
+        with open(self.meta_path, "rb") as f:
+            self.metadata = pickle.load(f)
+
+        # -------- Load Model --------
+        self.model, _, self.preprocess = open_clip.create_model_and_transforms(
+            "MobileCLIP2-S2",
+            pretrained="dfndr2b"
+        )
+
+        if os.path.exists(self.lora_dir):
+            self.model = PeftModel.from_pretrained(self.model, self.lora_dir)
+            self.model = self.model.merge_and_unload()
+            print("✅ LoRA merged")
+
+        self.model = reparameterize_model(self.model)
+        self.model = self.model.to(self.device, dtype=self.dtype).eval()
+        self.tokenizer = open_clip.get_tokenizer("MobileCLIP2-S2")
+
+        ProductSearchTool._initialized = True
+        print(f"✅ ProductSearchTool Ready ({len(self.metadata)} items)")
+
+    # -------------------------------------------------
+    # SEARCH METHODS
+    # -------------------------------------------------
+
+    def search_text(self, query: str, top_k: int = 3):
+        tokens = self.tokenizer([query]).to(self.device)
+
         with torch.no_grad():
-            text_features = self.model.encode_text(text_tokens)
-            text_features /= text_features.norm(dim=-1, keepdim=True)
-        
-        # Query FAISS
-        query_np = text_features.cpu().numpy().astype('float32')
-        distances, indices = self.index.search(query_np, top_k)
-        
+            features = self.model.encode_text(tokens)
+            features /= features.norm(dim=-1, keepdim=True)
+
+        return self._faiss_query(features, top_k)
+
+    def search_image(self, image_path: str, top_k: int = 3):
+        image = Image.open(image_path).convert("RGB")
+        img_tensor = (
+            self.preprocess(image)
+            .unsqueeze(0)
+            .to(self.device, dtype=self.dtype)
+        )
+
+        with torch.no_grad():
+            features = self.model.encode_image(img_tensor)
+            features /= features.norm(dim=-1, keepdim=True)
+
+        return self._faiss_query(features, top_k)
+
+    # -------------------------------------------------
+    # INTERNAL FAISS QUERY
+    # -------------------------------------------------
+
+    def _faiss_query(self, embedding, top_k):
+        query_np = embedding.cpu().numpy().astype("float32")
+        _, indices = self.index.search(query_np, top_k)
+
         results = []
-        for i in range(top_k):
+
+        for i in range(min(top_k, len(indices[0]))):
             idx = indices[0][i]
-            if idx != -1: # Ensure a match was found
-                results.append({
-                    "product_id": self.metadata[idx]['key'],
-                    "description": self.metadata[idx]['txt'],
-                    "similarity_score": float(distances[0][i])
-                })
-        
+
+            if idx != -1 and idx < len(self.metadata):
+                filename = self.metadata[idx].get("key")
+
+                if filename:
+                    subfolder = filename[:2]
+                    relative_path = f"small/{subfolder}/{filename}"
+                    results.append(relative_path)
+
         return results
+
+
+# -------------------------------------------------
+# SINGLETON GETTER
+# -------------------------------------------------
+
+_visual_search_instance = None
+
+
+def get_visual_search_tool():
+    global _visual_search_instance
+    if _visual_search_instance is None:
+        _visual_search_instance = ProductSearchTool()
+    return _visual_search_instance

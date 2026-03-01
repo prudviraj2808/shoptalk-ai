@@ -1,8 +1,8 @@
-data/
+raw_data/
 training_data/
 models/
 **/__pycache__
 **/*.egg-info
-.venv
-venv
+/.venv
+/venv
 .git
