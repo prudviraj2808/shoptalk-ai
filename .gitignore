@@ -29,6 +29,7 @@ Thumbs.db
 # Data
 
 /data/
+/raw_data
 /training_data/
 /models/
 *.tar

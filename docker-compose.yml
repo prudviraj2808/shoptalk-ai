@@ -23,20 +23,21 @@ services:
       dockerfile: docker/Dockerfile
     container_name: shoptalk-app
     restart: unless-stopped
-    # Executes our combined script
-    command: ["/bin/bash", "./start.sh"]
+    # Use the script we fixed
+    command: ["./start.sh"]
     ports:
-      - "8000:8000" # FastAPI
-      - "5000:5000" # ADK UI
+      - "8000:8000"
     env_file:
       - .env
     environment:
-      # Double-reinforces the path for the Python interpreter
       - PYTHONPATH=/app
+      - BASE_URL=http://localhost:8000
+      # Ensure the app knows where the DB is
+      - DATABASE_URL=postgresql+asyncpg://user:pass@db:5432/shoptalk
     volumes:
       - .:/app
-      # overwriting the Linux .venv inside the container
-      - /app/.venv
+      - /app/.venv    # ✅ CRITICAL: This protects the internal Linux venv
+      - ./data:/data 
     depends_on:
       db:
         condition: service_healthy
