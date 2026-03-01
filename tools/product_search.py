@@ -14,7 +14,7 @@ class ProductSearchTool:
 
     def __new__(cls, *args, **kwargs):
         if cls._instance is None:
-            cls._instance = super(ProductSearchTool, cls).__new__(cls)
+            cls._instance = super().__new__(cls)
         return cls._instance
 
     def __init__(self):
@@ -22,24 +22,12 @@ class ProductSearchTool:
             return
 
         print("🔥 Initializing ProductSearchTool...")
-        print("PID:", os.getpid())
 
-        # -------- Paths --------
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        self.BASE_DIR = os.path.abspath(os.path.join(current_dir, ".."))
+        BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
-        self.index_path = os.path.join(self.BASE_DIR, "shoptalk_index.faiss")
-        self.meta_path = os.path.join(self.BASE_DIR, "metadata.pkl")
-        self.lora_dir = os.path.join(self.BASE_DIR, "model", "mobileclip2_lora")
-
-        # Image root folder
-        self.image_root = os.path.join(
-            self.BASE_DIR,
-            "data",
-            "abo-images-small",
-            "images",
-            "small"
-        )
+        self.index_path = os.path.join(BASE_DIR, "shoptalk_index.faiss")
+        self.meta_path = os.path.join(BASE_DIR, "metadata.pkl")
+        self.lora_dir = os.path.join(BASE_DIR, "model", "mobileclip2_lora")
 
         # -------- Device --------
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -72,7 +60,9 @@ class ProductSearchTool:
         ProductSearchTool._initialized = True
         print(f"✅ ProductSearchTool Ready ({len(self.metadata)} items)")
 
-    # -------- SEARCH METHODS --------
+    # -------------------------------------------------
+    # SEARCH METHODS
+    # -------------------------------------------------
 
     def search_text(self, query: str, top_k: int = 3):
         tokens = self.tokenizer([query]).to(self.device)
@@ -97,42 +87,33 @@ class ProductSearchTool:
 
         return self._faiss_query(features, top_k)
 
-    # -------- INTERNAL METHODS --------
-
-    def _build_image_path(self, filename: str):
-        """
-        Builds full ABO image path:
-        small/<first_two_chars>/<filename>
-        """
-        if not filename:
-            return None
-
-        subfolder = filename[:2]
-        return os.path.join(self.image_root, subfolder, filename)
+    # -------------------------------------------------
+    # INTERNAL FAISS QUERY
+    # -------------------------------------------------
 
     def _faiss_query(self, embedding, top_k):
         query_np = embedding.cpu().numpy().astype("float32")
         _, indices = self.index.search(query_np, top_k)
 
-        image_paths = []
+        results = []
 
         for i in range(min(top_k, len(indices[0]))):
             idx = indices[0][i]
 
             if idx != -1 and idx < len(self.metadata):
+                filename = self.metadata[idx].get("key")
 
-                meta = self.metadata[idx]
-                filename = meta.get("key")
+                if filename:
+                    subfolder = filename[:2]
+                    relative_path = f"small/{subfolder}/{filename}"
+                    results.append(relative_path)
 
-                full_path = self._build_image_path(filename)
-
-                if full_path and os.path.exists(full_path):
-                    image_paths.append(full_path)
-
-        return image_paths
+        return results
 
 
-# -------- Singleton Getter --------
+# -------------------------------------------------
+# SINGLETON GETTER
+# -------------------------------------------------
 
 _visual_search_instance = None
 
