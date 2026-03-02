@@ -120,7 +120,7 @@ Your Docker Compose setup launches three main services, each with its own role a
 
 ### 2. ADK Development UI
 - **Service name:** adk-ui
-- **URL:** http://localhost:5000
+- **URL:** http://localhost:8000
 - **Purpose:** Provides the ADK web interface, limited to agent selection in the agents/ folder.
 - **Depends on:** db (waits for database to be healthy before starting)
 
