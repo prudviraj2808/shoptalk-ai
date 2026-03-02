@@ -117,14 +117,8 @@ Your Docker Compose setup launches three main services, each with its own role a
   - Connection string (internal): `postgresql://user:pass@db:5432/shoptalk`
   - Use `db` as the host internally because Docker Compose creates a network and uses service names as hostnames.
 
-### 2. FastAPI Application (Core Logic)
-- **Service name:** app
-- **URL:** http://localhost:8000
-- **OpenAPI JSON:** http://localhost:8000/openapi.json
-- **Purpose:** Runs the main FastAPI backend (see src/main.py). Handles API requests and interacts with the database.
-- **Depends on:** db (waits for database to be healthy before starting)
 
-### 3. ADK Development UI
+### 2. ADK Development UI
 - **Service name:** adk-ui
 - **URL:** http://localhost:5000
 - **Purpose:** Provides the ADK web interface, limited to agent selection in the agents/ folder.
@@ -149,13 +143,10 @@ shoptalk-ai/
 ├── docker/
 │   └── Dockerfile
 ├── models/
-├── src/
+├── agents/
 │   ├── agent.py
-│   ├── database.py
-│   ├── main.py
-│   ├── memory.py
-│   ├── tools.py
-│   └── ...
+├── tools/
+│   ├── product_search.py
 ├── train/
 │   ├── dataset.py
 │   ├── finetune.py
