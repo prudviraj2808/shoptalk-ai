@@ -38,6 +38,10 @@ class ProductSearchTool:
         # -------- Load FAISS --------
         self.index = faiss.read_index(self.index_path)
 
+        # 🔥 IMPORTANT: Set nprobe for IVF index
+        if isinstance(self.index, faiss.IndexIVF):
+            self.index.nprobe = 16  # 8=faster, 32=more accurate
+
         # -------- Load Metadata --------
         with open(self.meta_path, "rb") as f:
             self.metadata = pickle.load(f)
@@ -55,6 +59,11 @@ class ProductSearchTool:
 
         self.model = reparameterize_model(self.model)
         self.model = self.model.to(self.device, dtype=self.dtype).eval()
+
+        # 🔥 cuDNN autotune (A10G optimization)
+        if self.device == "cuda":
+            torch.backends.cudnn.benchmark = True
+
         self.tokenizer = open_clip.get_tokenizer("MobileCLIP2-S2")
 
         ProductSearchTool._initialized = True
@@ -92,8 +101,9 @@ class ProductSearchTool:
     # -------------------------------------------------
 
     def _faiss_query(self, embedding, top_k):
-        query_np = embedding.cpu().numpy().astype("float32")
-        _, indices = self.index.search(query_np, top_k)
+        query_np = embedding.detach().cpu().numpy().astype("float32")
+
+        distances, indices = self.index.search(query_np, top_k)
 
         results = []
 
