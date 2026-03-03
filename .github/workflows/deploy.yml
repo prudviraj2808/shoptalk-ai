@@ -1,0 +1,220 @@
+name: CI/CD → Deploy to EC2 (g5.2xlarge)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:   # allow manual trigger
+
+env:
+  AWS_REGION:       ${{ secrets.AWS_DEFAULT_REGION }}
+  ECR_REPOSITORY:   ${{ secrets.ECR_REPOSITORY }}        # e.g. shoptalk-ai
+  IMAGE_TAG:        ${{ github.sha }}
+  S3_BUCKET:        ${{ secrets.S3_BUCKET }}             # e.g. shoptalk-assets-storage
+
+jobs:
+  # ─────────────────────────────────────────────
+  # 1. BUILD & PUSH DOCKER IMAGE TO ECR
+  # ─────────────────────────────────────────────
+  build-and-push:
+    name: Build & Push to ECR
+    runs-on: ubuntu-latest
+
+    outputs:
+      image_uri: ${{ steps.build.outputs.image_uri }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag, and push image to ECR
+        id: build
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          IMAGE_URI=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          LATEST_URI=$ECR_REGISTRY/$ECR_REPOSITORY:latest
+
+          docker build \
+            --file docker/Dockerfile \
+            --tag $IMAGE_URI \
+            --tag $LATEST_URI \
+            --cache-from $LATEST_URI \
+            .
+
+          docker push $IMAGE_URI
+          docker push $LATEST_URI
+
+          echo "image_uri=$IMAGE_URI" >> $GITHUB_OUTPUT
+
+  # ─────────────────────────────────────────────
+  # 2. DEPLOY TO EC2
+  # ─────────────────────────────────────────────
+  deploy:
+    name: Deploy to EC2 g5.2xlarge
+    runs-on: ubuntu-latest
+    needs: build-and-push
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR (needed for remote pull)
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # Write .env to a temp file, then scp it to the instance
+      - name: Write .env file
+        run: |
+          cat > .env <<EOF
+          DATABASE_URL=postgresql+asyncpg://user:${{ secrets.DB_PASSWORD }}@db:5432/shoptalk
+          AGENT_DIR=./agents
+          PORT=8000
+          LORA_ADAPTER_PATH=./models/shoptalk-lora-adapter
+          DATA_DIR=./data
+          ABO_TAR_FILE=abo-images-small.tar
+          ABO_METADATA_FILE=listings.csv
+          MODEL_NAME=MobileCLIP2-S2
+          PRETRAINED=dfndr2b
+          DEVICE=cuda
+          BATCH_SIZE=16
+          LEARNING_RATE=5e-5
+          EPOCHS=3
+          ENDPOINT_NAME=${{ secrets.ENDPOINT_NAME }}
+          AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION=${{ env.AWS_REGION }}
+          GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }}
+          EOF
+
+      - name: Write docker-compose.prod.yml
+        env:
+          IMAGE_URI: ${{ needs.build-and-push.outputs.image_uri }}
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          cat > docker-compose.prod.yml <<EOF
+          services:
+            db:
+              image: pgvector/pgvector:pg16
+              container_name: shoptalk-db
+              restart: unless-stopped
+              environment:
+                POSTGRES_USER: user
+                POSTGRES_PASSWORD: \${DB_PASSWORD}
+                POSTGRES_DB: shoptalk
+              ports:
+                - "5432:5432"
+              volumes:
+                - postgres_data:/var/lib/postgresql/data
+              healthcheck:
+                test: ["CMD-SHELL", "pg_isready -U user -d shoptalk"]
+                interval: 5s
+                timeout: 5s
+                retries: 5
+
+            shoptalk:
+              image: ${IMAGE_URI}
+              container_name: shoptalk-app
+              restart: unless-stopped
+              command: ["./start.sh"]
+              ports:
+                - "8000:8000"
+              env_file:
+                - .env
+              environment:
+                - PYTHONPATH=/app
+                - DATABASE_URL=postgresql+asyncpg://user:\${DB_PASSWORD}@db:5432/shoptalk
+              volumes:
+                - ./data:/app/data
+                - ./models:/app/models
+                - ./vector-index:/app/vector-index
+              depends_on:
+                db:
+                  condition: service_healthy
+              deploy:
+                resources:
+                  reservations:
+                    devices:
+                      - driver: nvidia
+                        count: 1
+                        capabilities: [gpu]
+
+          volumes:
+            postgres_data:
+          EOF
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          ECR_REGISTRY:  ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPO:      ${{ env.ECR_REPOSITORY }}
+          IMAGE_URI:     ${{ needs.build-and-push.outputs.image_uri }}
+          AWS_REGION:    ${{ env.AWS_REGION }}
+          S3_BUCKET:     ${{ env.S3_BUCKET }}
+          AWS_KEY_ID:    ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET:    ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          DB_PASSWORD:   ${{ secrets.DB_PASSWORD }}
+        with:
+          host:        ${{ secrets.EC2_HOST }}
+          username:    ec2-user
+          key:         ${{ secrets.EC2_SSH_KEY }}
+          envs:        ECR_REGISTRY,ECR_REPO,IMAGE_URI,AWS_REGION,S3_BUCKET,AWS_KEY_ID,AWS_SECRET,DB_PASSWORD
+          script: |
+            set -e
+
+            APP_DIR=/home/ec2-user/shoptalk
+            mkdir -p $APP_DIR
+            cd $APP_DIR
+
+            # ── Authenticate Docker with ECR ──────────────────────────────
+            aws ecr get-login-password --region $AWS_REGION \
+              | docker login --username AWS --password-stdin $ECR_REGISTRY
+
+            # ── Sync S3 assets (only changed files) ──────────────────────
+            echo "⬇️  Syncing S3 assets..."
+            aws s3 sync s3://$S3_BUCKET/models/        ./models/       --exact-timestamps
+            aws s3 sync s3://$S3_BUCKET/vector-index/  ./vector-index/ --exact-timestamps
+            aws s3 sync s3://$S3_BUCKET/data/small/    ./data/small/   --exact-timestamps
+
+            # ── Pull latest image ─────────────────────────────────────────
+            echo "⬇️  Pulling image $IMAGE_URI..."
+            docker pull $IMAGE_URI
+
+            # ── Restart services ──────────────────────────────────────────
+            echo "🔄 Restarting containers..."
+            DB_PASSWORD=$DB_PASSWORD \
+              docker compose -f docker-compose.prod.yml up -d --remove-orphans
+
+            # ── Prune old images to save disk ─────────────────────────────
+            docker image prune -f
+
+            echo "✅ Deployment complete!"
+
+      - name: Health check
+        run: |
+          echo "Waiting 30s for app to start..."
+          sleep 30
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://${{ secrets.EC2_HOST }}:8000/health || echo "000")
+          echo "Health check status: $STATUS"
+          if [ "$STATUS" != "200" ]; then
+            echo "⚠️  Health check returned $STATUS — please verify the app manually."
+          else
+            echo "✅ App is healthy!"
+          fi
