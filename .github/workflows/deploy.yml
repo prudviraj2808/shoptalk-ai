@@ -142,7 +142,7 @@ jobs:
                 - PYTHONPATH=/app
                 - DATABASE_URL=postgresql+asyncpg://user:\${DB_PASSWORD}@db:5432/shoptalk
               volumes:
-                - ./data:/app/data
+                - ./abo_data:/app/abo_data
                 - ./models:/app/models
                 - ./vector-index:/app/vector-index
               depends_on:
@@ -191,7 +191,7 @@ jobs:
             echo "⬇️  Syncing S3 assets..."
             aws s3 sync s3://$S3_BUCKET/models/        ./models/       --exact-timestamps
             aws s3 sync s3://$S3_BUCKET/vector-index/  ./vector-index/ --exact-timestamps
-            aws s3 sync s3://$S3_BUCKET/data/small/    ./data/small/   --exact-timestamps
+            aws s3 sync s3://$S3_BUCKET/abo_data/      ./abo_data/     --exact-timestamps
 
             # ── Pull latest image ─────────────────────────────────────────
             echo "⬇️  Pulling image $IMAGE_URI..."
