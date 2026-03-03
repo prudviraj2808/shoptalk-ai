@@ -34,7 +34,7 @@ services:
     volumes:
       # ✅ Only mount data dirs — never mount .:/app in production
       # It overwrites the built image and breaks the installed venv
-      - ./data:/app/data
+      - ./abo_data:/app/abo_data
       - ./models:/app/models
       - ./vector-index:/app/vector-index
       - /app/.venv    # Protect the internal Linux venv
