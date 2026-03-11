@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ShopTalk AI — System Architecture</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,600;0,9..144,700;1,9..144,300&display=swap');
+
+:root {
+  --bg: #06060a;
+  --surface: #0d0d14;
+  --surface2: #12121c;
+  --border: #1c1c2e;
+  --border2: #252538;
+  --text: #dde1f0;
+  --muted: #555870;
+  --muted2: #888ba8;
+
+  --data:    #ff6b35;
+  --train:   #00d4aa;
+  --index:   #7b6ef6;
+  --agent:   #f5c518;
+  --infra:   #e066ff;
+  --db:      #3b9dff;
+}
+
+* { margin:0; padding:0; box-sizing:border-box; }
+
+body {
+  background: var(--bg);
+  font-family: 'IBM Plex Mono', monospace;
+  color: var(--text);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* Subtle grid background */
+body::before {
+  content:'';
+  position:fixed; inset:0; pointer-events:none;
+  background-image:
+    linear-gradient(rgba(255,255,255,0.015) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.015) 1px, transparent 1px);
+  background-size: 40px 40px;
+  z-index:0;
+}
+
+.wrap { position:relative; z-index:1; padding:48px 32px; max-width:1300px; margin:0 auto; }
+
+/* ── HEADER ── */
+header { margin-bottom:52px; }
+.header-top { display:flex; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; gap:16px; }
+.title-block {}
+.eyebrow {
+  font-size:10px; letter-spacing:4px; text-transform:uppercase; color:var(--muted2);
+  margin-bottom:10px; display:flex; align-items:center; gap:8px;
+}
+.eyebrow::before { content:''; display:block; width:24px; height:1px; background:var(--muted2); }
+h1 {
+  font-family:'Fraunces', serif; font-size:clamp(28px,4vw,46px); font-weight:700;
+  letter-spacing:-1.5px; line-height:1.05; color:#fff;
+}
+h1 em { font-style:italic; color:var(--agent); }
+.subtitle { font-size:11px; color:var(--muted2); margin-top:10px; line-height:1.8; }
+
+.meta-pills { display:flex; gap:8px; flex-wrap:wrap; align-items:flex-start; }
+.meta-pill {
+  font-size:10px; letter-spacing:1px; text-transform:uppercase;
+  padding:5px 12px; border-radius:2px; border:1px solid;
+}
+
+/* ── LEGEND ── */
+.legend {
+  display:flex; flex-wrap:wrap; gap:6px; margin-top:24px;
+  padding:14px 20px; background:var(--surface); border:1px solid var(--border);
+  border-radius:4px;
+}
+.legend-item { display:flex; align-items:center; gap:7px; font-size:10px; color:var(--muted2); letter-spacing:1px; text-transform:uppercase; margin-right:8px; }
+.legend-dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
+
+/* ── DIAGRAM AREA ── */
+.diagram-area {
+  position:relative; width:100%; overflow:auto;
+  background:var(--surface); border:1px solid var(--border);
+  border-radius:6px; margin-bottom:32px;
+}
+
+svg { display:block; }
+
+/* ── NODE STYLES ── */
+.node-group { cursor:pointer; }
+.node-group .node-rect {
+  rx:5; ry:5;
+  transition: filter 0.2s;
+}
+.node-group:hover .node-rect { filter: brightness(1.4); }
+.node-group:hover .node-label { fill: #fff; }
+
+.node-icon { font-size:18px; }
+.node-title { font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:11px; }
+.node-sub { font-family:'IBM Plex Mono',monospace; font-weight:400; font-size:9px; }
+
+/* ── TOOLTIP ── */
+.tooltip {
+  position:fixed; z-index:100; pointer-events:none;
+  background:#0d0d18; border:1px solid var(--border2);
+  border-radius:6px; padding:14px 18px; max-width:280px;
+  box-shadow: 0 24px 48px rgba(0,0,0,0.6);
+  opacity:0; transition:opacity 0.15s;
+}
+.tooltip.show { opacity:1; }
+.tooltip-title { font-size:12px; font-weight:600; color:#fff; margin-bottom:8px; }
+.tooltip-body { font-size:11px; color:var(--muted2); line-height:1.7; }
+.tooltip-tags { display:flex; flex-wrap:wrap; gap:4px; margin-top:10px; }
+.tooltip-tag {
+  font-size:9px; padding:2px 7px; border-radius:2px;
+  background:rgba(255,255,255,0.05); border:1px solid var(--border2);
+  color:var(--muted2); letter-spacing:0.5px;
+}
+.tooltip-accent { display:inline-block; width:6px; height:6px; border-radius:50%; margin-right:6px; vertical-align:middle; }
+
+/* ── DETAIL PANEL ── */
+.detail-panel {
+  background:var(--surface); border:1px solid var(--border2);
+  border-radius:6px; padding:28px; margin-bottom:32px;
+  display:none;
+}
+.detail-panel.show { display:block; animation:slideIn 0.25s ease; }
+@keyframes slideIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+.detail-header { display:flex; align-items:center; gap:14px; margin-bottom:20px; }
+.detail-icon { font-size:32px; }
+.detail-title { font-family:'Fraunces',serif; font-size:22px; font-weight:600; color:#fff; letter-spacing:-0.5px; }
+.detail-phase { font-size:10px; color:var(--muted2); letter-spacing:2px; text-transform:uppercase; }
+.detail-close { margin-left:auto; cursor:pointer; color:var(--muted); font-size:18px; padding:4px 8px; }
+.detail-close:hover { color:#fff; }
+.detail-body { display:grid; grid-template-columns:1fr 1fr; gap:24px; }
+@media(max-width:600px) { .detail-body { grid-template-columns:1fr; } }
+.detail-section {}
+.detail-section h3 { font-size:10px; letter-spacing:2px; text-transform:uppercase; color:var(--muted2); margin-bottom:12px; border-bottom:1px solid var(--border); padding-bottom:8px; }
+.detail-list { list-style:none; }
+.detail-list li { font-size:11px; color:var(--muted2); padding:5px 0; border-bottom:1px solid var(--border); display:flex; gap:8px; }
+.detail-list li::before { content:'→'; color:var(--muted); flex-shrink:0; }
+.detail-list li span { color:var(--text); }
+.tech-grid { display:flex; flex-wrap:wrap; gap:6px; }
+.tech-chip {
+  font-size:10px; padding:4px 10px; border-radius:3px;
+  border:1px solid var(--border2); color:var(--muted2);
+  background:rgba(255,255,255,0.03);
+}
+
+/* ── CONTROLS ── */
+.controls { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:24px; }
+.ctrl-btn {
+  font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:1px;
+  text-transform:uppercase; padding:7px 16px; border-radius:3px;
+  border:1px solid var(--border2); background:var(--surface);
+  color:var(--muted2); cursor:pointer; transition:all 0.15s;
+}
+.ctrl-btn:hover, .ctrl-btn.active { border-color:currentColor; color:#fff; }
+.ctrl-btn[data-layer="data"]:hover    { color:var(--data); }
+.ctrl-btn[data-layer="train"]:hover   { color:var(--train); }
+.ctrl-btn[data-layer="index"]:hover   { color:var(--index); }
+.ctrl-btn[data-layer="agent"]:hover   { color:var(--agent); }
+.ctrl-btn[data-layer="infra"]:hover   { color:var(--infra); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="header-top">
+      <div class="title-block">
+        <div class="eyebrow">System Architecture v1.0</div>
+        <h1>ShopTalk <em>AI</em></h1>
+        <div class="subtitle">
+          Visual Product Search · MobileCLIP2-S2 + LoRA · FAISS · Google ADK · EC2 g5.2xlarge
+        </div>
+      </div>
+      <div class="meta-pills">
+        <div class="meta-pill" style="color:var(--data);border-color:var(--data)">Offline Pipeline</div>
+        <div class="meta-pill" style="color:var(--agent);border-color:var(--agent)">Runtime Agent</div>
+        <div class="meta-pill" style="color:var(--infra);border-color:var(--infra)">Cloud Infra</div>
+      </div>
+    </div>
+    <div class="legend">
+      <div class="legend-item"><div class="legend-dot" style="background:var(--data)"></div>Data Pipeline</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--train)"></div>Model Training</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--index)"></div>Vector Index</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--agent)"></div>Agent Runtime</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--infra)"></div>Infrastructure</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--db)"></div>Storage</div>
+    </div>
+  </header>
+
+  <div class="controls">
+    <button class="ctrl-btn" data-layer="all">All Layers</button>
+    <button class="ctrl-btn" data-layer="data">① Data</button>
+    <button class="ctrl-btn" data-layer="train">② Training</button>
+    <button class="ctrl-btn" data-layer="index">③ Index</button>
+    <button class="ctrl-btn" data-layer="agent">④ Agent</button>
+    <button class="ctrl-btn" data-layer="infra">⑤ Infra</button>
+  </div>
+
+  <div id="detail" class="detail-panel"></div>
+  <div class="diagram-area" id="diagram"></div>
+</div>
+
+<div class="tooltip" id="tooltip"></div>
+
+<script>
+const COLORS = {
+  data:'#ff6b35', train:'#00d4aa', index:'#7b6ef6',
+  agent:'#f5c518', infra:'#e066ff', db:'#3b9dff'
+};
+
+const nodes = [
+  // ── DATA LAYER ──
+  { id:'abo_images', x:80,  y:80,  w:170, h:72, layer:'data', icon:'🗃️', title:'ABO Images', sub:'abo-images-small.tar', detail:{
+    phase:'① Data Exploration', desc:'Amazon Berkeley Objects dataset. 147,702 product images organized in 2-char subfolders (00/, 01/…). Sourced as .tar archive.',
+    inputs:['S3: abo_data/abo-images-small/images/','TAR shards with subfolders 00–ff'],
+    outputs:['Streamed via tarfile + PIL','Yielded as (Image, filename_key) pairs'],
+    tech:['PIL','tarfile','WebDataset','boto3']
+  }},
+  { id:'listings',   x:80,  y:190, w:170, h:72, layer:'data', icon:'📋', title:'listings.csv', sub:'Product metadata', detail:{
+    phase:'① Data Exploration', desc:'ABO product listings with titles, categories, brand names and image keys. Used for text side of contrastive pairs.',
+    inputs:['Raw ABO metadata CSV (~880k rows)','Item ID → image key mapping'],
+    outputs:['Filtered pairs for training','Refined via SageMaker LLM endpoint'],
+    tech:['pandas','SageMaker','boto3']
+  }},
+  { id:'prepare',    x:320, y:120, w:180, h:72, layer:'data', icon:'⚙️', title:'prepare_training_data', sub:'Filter · Clean · Pair', detail:{
+    phase:'① Data Preparation', desc:'Filters and cleans the ABO dataset. Pairs product images with their text descriptions for contrastive learning. Removes duplicates and low-quality samples.',
+    inputs:['abo-images-small/','listings.csv'],
+    outputs:['(image_path, text) pairs','Cleaned dataset CSV'],
+    tech:['pandas','PIL','numpy']
+  }},
+  { id:'shards',     x:320, y:230, w:180, h:72, layer:'data', icon:'📦', title:'shards_tar.py', sub:'WebDataset shards', detail:{
+    phase:'① Data Preparation', desc:'Packs image-text pairs into WebDataset-compatible .tar shards for efficient GPU streaming during training. Avoids random-access bottlenecks.',
+    inputs:['Cleaned (image, text) pairs'],
+    outputs:['embedding/shards/*.tar','Each shard ~512MB'],
+    tech:['WebDataset','tarfile','braceexpand']
+  }},
+  { id:'sagemaker',  x:320, y:340, w:180, h:72, layer:'data', icon:'🤖', title:'SageMaker Refinement', sub:'LLM metadata enrichment', detail:{
+    phase:'① Data Exploration', desc:'Uses a LLaMA endpoint on SageMaker to enrich and standardize product metadata descriptions. Improves text quality for contrastive training.',
+    inputs:['listings.csv raw descriptions'],
+    outputs:['Enriched product descriptions','Better image-text alignment'],
+    tech:['boto3','SageMaker','LLaMA endpoint']
+  }},
+
+  // ── TRAINING LAYER ──
+  { id:'base_model', x:580, y:80,  w:180, h:72, layer:'train', icon:'🧠', title:'MobileCLIP2-S2', sub:'pretrained=dfndr2b', detail:{
+    phase:'② Model Fine-Tuning', desc:'Lightweight dual-encoder CLIP model. Produces 512-dim embeddings for both image and text. Much faster than ViT-L but strong product domain performance.',
+    inputs:['open_clip pretrained weights','dfndr2b checkpoint'],
+    outputs:['512-dim image embeddings','512-dim text embeddings'],
+    tech:['open_clip','timm','torch']
+  }},
+  { id:'finetune',   x:580, y:190, w:180, h:72, layer:'train', icon:'🎯', title:'LoRA Fine-Tuning', sub:'Contrastive loss · Mixed precision', detail:{
+    phase:'② Model Fine-Tuning', desc:'Fine-tunes only small LoRA adapter layers on product image-text pairs. Base weights frozen. Trains with contrastive loss (InfoNCE). Mixed precision + gradient checkpointing for A10G efficiency.',
+    inputs:['WebDataset shards','Base MobileCLIP2-S2 weights'],
+    outputs:['adapter_model.safetensors','adapter_config.json'],
+    tech:['peft','torch','accelerate','datasets']
+  }},
+  { id:'lora_out',   x:580, y:300, w:180, h:72, layer:'train', icon:'💾', title:'mobileclip2_lora/', sub:'adapter_model.safetensors', detail:{
+    phase:'② Model Output', desc:'LoRA adapter weights saved in safetensors format. At inference, merged into base model via merge_and_unload() then reparameterize_model() for zero-overhead inference.',
+    inputs:['Training output checkpoint'],
+    outputs:['Uploaded to S3: models/mobileclip2_lora/'],
+    tech:['safetensors','peft','open_clip','timm']
+  }},
+
+  // ── INDEX LAYER ──
+  { id:'embed_script', x:840, y:140, w:185, h:72, layer:'index', icon:'⚡', title:'embeddings_gpu.py', sub:'Batch=256 · A10G', detail:{
+    phase:'③ Vector Index Generation', desc:'Runs once offline. Encodes all product images in batches of 256 on A10G GPU. Unit-normalizes vectors for cosine similarity. Streams images from TAR shards directly.',
+    inputs:['All ABO product images','Merged+reparameterized model'],
+    outputs:['N×512 float32 embedding matrix','Image key list'],
+    tech:['faiss','numpy','torch','open_clip','tarfile']
+  }},
+  { id:'faiss_idx',    x:840, y:260, w:185, h:72, layer:'index', icon:'🔍', title:'shoptalk_index.faiss', sub:'IndexIVF · cosine · nprobe=16', detail:{
+    phase:'③ Vector Index', desc:'FAISS IVF index with 512-dim cosine similarity. nprobe=16 balances recall vs speed. Supports ~millions of vectors with sub-millisecond search.',
+    inputs:['Normalized 512-dim embeddings'],
+    outputs:['Stored: S3 vector-index/','Synced to EC2 at deploy'],
+    tech:['faiss-cpu','numpy']
+  }},
+  { id:'metadata_pkl', x:840, y:370, w:185, h:72, layer:'index', icon:'🗺️', title:'metadata.pkl', sub:'FAISS idx → image filename', detail:{
+    phase:'③ Vector Index', desc:'Python dict mapping FAISS integer index → {key: "00a6.jpg"}. Used to resolve search results back to image file paths for serving.',
+    inputs:['Image filename list from embedding loop'],
+    outputs:['Stored: S3 vector-index/','Loaded at ProductSearchTool init'],
+    tech:['pickle','python']
+  }},
+
+  // ── AGENT LAYER ──
+  { id:'user',        x:80,  y:540, w:150, h:72, layer:'agent', icon:'👤', title:'User Query', sub:'Text or Image input', detail:{
+    phase:'④ Agent Runtime', desc:'End user interacts via the Google ADK web UI. Can submit natural language product descriptions or upload query images.',
+    inputs:['Natural language: "red leather sofa"','Image file upload'],
+    outputs:['Request to ADK agent'],
+    tech:['Browser','Google ADK Web UI']
+  }},
+  { id:'agent',       x:300, y:540, w:185, h:72, layer:'agent', icon:'🤖', title:'ShopTalk Agent', sub:'Gemini 2.5 Flash · Google ADK', detail:{
+    phase:'④ Agent Runtime', desc:'LlmAgent powered by Gemini 2.5 Flash. Decides which tool to call based on input type. Manages conversation context via DatabaseSessionService.',
+    inputs:['User text or image path','Session history from PostgreSQL'],
+    outputs:['Tool call: search_by_text or search_by_image','Formatted product results'],
+    tech:['google-adk','gemini-2.5-flash','fastapi']
+  }},
+  { id:'search_tool', x:555, y:540, w:185, h:72, layer:'agent', icon:'🔎', title:'ProductSearchTool', sub:'FAISS · MobileCLIP2 · Singleton', detail:{
+    phase:'④ Agent Runtime', desc:'Singleton loaded once at startup. Encodes query with fine-tuned MobileCLIP2 on GPU, searches FAISS index, returns top-K image paths. torch.autocast for A10G speedup.',
+    inputs:['Text query or image path','FAISS index + metadata (loaded at init)'],
+    outputs:['["small/00/00a6.jpg", ...]','Top-3 relative image paths'],
+    tech:['open_clip','faiss','torch','peft','timm']
+  }},
+  { id:'static_files',x:810, y:540, w:165, h:72, layer:'agent', icon:'🖼️', title:'StaticFiles /images', sub:'/app/abo_data/...', detail:{
+    phase:'④ Agent Runtime', desc:'FastAPI StaticFiles middleware mounts the ABO image directory. Serves product images directly from EC2 volume mount. No S3 fetch at inference time.',
+    inputs:['Volume: ./abo_data:/app/abo_data'],
+    outputs:['GET /images/small/00/filename.jpg','Direct file read from EC2 disk'],
+    tech:['fastapi','StaticFiles','uvicorn']
+  }},
+
+  // ── INFRA / STORAGE ──
+  { id:'s3',          x:1060, y:200, w:160, h:72, layer:'db', icon:'🪣', title:'Amazon S3', sub:'shoptalk-assets-storage', detail:{
+    phase:'⑤ Infrastructure', desc:'Single source of truth for all large assets. models/, vector-index/, abo_data/. Synced to EC2 at deploy time via aws s3 sync --exact-timestamps.',
+    inputs:['LoRA weights (post-training)','FAISS index + metadata (post-indexing)','ABO images (static)'],
+    outputs:['Synced to EC2 ~/shoptalk/ at deploy'],
+    tech:['aws s3 sync','boto3','IAM role']
+  }},
+  { id:'ecr',         x:1060, y:310, w:160, h:72, layer:'infra', icon:'📦', title:'Amazon ECR', sub:'shoptalk-ai:sha + :latest', detail:{
+    phase:'⑤ Infrastructure', desc:'Private Docker registry. Stores versioned images tagged by git SHA for rollback capability. GitHub Actions pushes, EC2 pulls.',
+    inputs:['docker build (multi-stage, uv)','Triggered by push to main'],
+    outputs:['shoptalk-ai:<git-sha>','shoptalk-ai:latest'],
+    tech:['ECR','docker','uv','python:3.12-slim']
+  }},
+  { id:'github_actions', x:1060,y:420, w:160, h:72, layer:'infra', icon:'⚙️', title:'GitHub Actions', sub:'CI/CD · deploy.yml', detail:{
+    phase:'⑤ Infrastructure', desc:'Triggered on push to main. 3 jobs: build+push to ECR, deploy via SSH (s3 sync + docker pull + compose up), health check at :8000/health.',
+    inputs:['Push to main branch','GitHub Secrets (AWS keys, SSH key)'],
+    outputs:['Docker image in ECR','New containers running on EC2'],
+    tech:['github-actions','appleboy/ssh-action','aws-actions']
+  }},
+  { id:'ec2',         x:1060,y:530, w:160, h:72, layer:'infra', icon:'🖥️', title:'EC2 g5.2xlarge', sub:'A10G GPU · 32GB RAM', detail:{
+    phase:'⑤ Infrastructure', desc:'Hosts both Docker containers. NVIDIA A10G GPU (24GB VRAM) runs model inference. nvidia-container-toolkit exposes GPU to Docker. 100GB+ EBS for ABO images.',
+    inputs:['Docker pull from ECR','aws s3 sync for assets'],
+    outputs:['shoptalk-app (port 8000)','shoptalk-db (port 5432)'],
+    tech:['docker compose','nvidia-container-toolkit','NVIDIA A10G']
+  }},
+  { id:'postgres',    x:1060,y:640, w:160, h:72, layer:'db', icon:'🐘', title:'PostgreSQL + pgvector', sub:'ADK session storage', detail:{
+    phase:'⑤ Infrastructure', desc:'Managed by Google ADK DatabaseSessionService. Stores conversation sessions and memory. pgvector extension enabled for vector operations. Persistent EBS volume.',
+    inputs:['ADK session writes','CREATE EXTENSION vector (init_db)'],
+    outputs:['Session history per user','Conversation memory retrieval'],
+    tech:['pgvector','postgresql:16','sqlalchemy','asyncpg']
+  }},
+];
+
+const edges = [
+  // Data pipeline
+  { from:'abo_images', to:'prepare', label:'images' },
+  { from:'listings',   to:'prepare', label:'metadata' },
+  { from:'listings',   to:'sagemaker', label:'raw text' },
+  { from:'prepare',    to:'shards',  label:'pairs' },
+  { from:'sagemaker',  to:'prepare', label:'enriched' },
+
+  // Training
+  { from:'shards',     to:'finetune', label:'stream' },
+  { from:'base_model', to:'finetune', label:'weights' },
+  { from:'finetune',   to:'lora_out', label:'adapters' },
+
+  // Indexing
+  { from:'lora_out',   to:'embed_script', label:'merged model' },
+  { from:'abo_images', to:'embed_script', label:'all images' },
+  { from:'embed_script',to:'faiss_idx',   label:'embeddings' },
+  { from:'embed_script',to:'metadata_pkl',label:'keys' },
+  { from:'faiss_idx',  to:'s3',           label:'upload' },
+  { from:'metadata_pkl',to:'s3',          label:'upload' },
+  { from:'lora_out',   to:'s3',           label:'upload' },
+
+  // Agent runtime
+  { from:'user',       to:'agent',       label:'query' },
+  { from:'agent',      to:'search_tool', label:'tool call' },
+  { from:'search_tool',to:'static_files',label:'path' },
+  { from:'static_files',to:'user',       label:'image URL' },
+  { from:'agent',      to:'postgres',    label:'session' },
+
+  // Infra flows
+  { from:'s3',    to:'ec2',           label:'s3 sync' },
+  { from:'ecr',   to:'ec2',           label:'docker pull' },
+  { from:'github_actions', to:'ecr',  label:'push' },
+  { from:'ec2',   to:'search_tool',   label:'runs' },
+  { from:'ec2',   to:'postgres',      label:'runs' },
+];
+
+// Build lookup
+const nodeMap = {};
+nodes.forEach(n => nodeMap[n.id] = n);
+
+const W = 1280, H = 780;
+const svg = d3.select('#diagram').append('svg')
+  .attr('width', W).attr('height', H)
+  .attr('viewBox', `0 0 ${W} ${H}`)
+  .style('min-width', W + 'px');
+
+// Defs
+const defs = svg.append('defs');
+defs.append('marker').attr('id','arrow').attr('markerWidth',8).attr('markerHeight',6)
+  .attr('refX',8).attr('refY',3).attr('orient','auto')
+  .append('polygon').attr('points','0 0, 8 3, 0 6').attr('fill','#2a2a42');
+
+Object.entries(COLORS).forEach(([k,v]) => {
+  defs.append('marker').attr('id','arrow-'+k).attr('markerWidth',8).attr('markerHeight',6)
+    .attr('refX',8).attr('refY',3).attr('orient','auto')
+    .append('polygon').attr('points','0 0, 8 3, 0 6').attr('fill',v).attr('opacity','0.5');
+
+  const g = defs.append('linearGradient').attr('id','grad-'+k).attr('x1','0%').attr('y1','0%').attr('x2','100%').attr('y2','100%');
+  g.append('stop').attr('offset','0%').attr('stop-color',v).attr('stop-opacity','0.18');
+  g.append('stop').attr('offset','100%').attr('stop-color',v).attr('stop-opacity','0.06');
+});
+
+// Draw edges
+function midpoint(a, b) {
+  const ax = a.x + a.w/2, ay = a.y + a.h/2;
+  const bx = b.x + b.w/2, by = b.y + b.h/2;
+  return { x:(ax+bx)/2, y:(ay+by)/2 };
+}
+
+function edgePoints(a, b) {
+  // Simple edge from right/bottom of a to left/top of b
+  const ax = a.x + a.w, ay = a.y + a.h/2;
+  const bx = b.x, by = b.y + b.h/2;
+  if (Math.abs(ay - by) < 10) return `M ${ax} ${ay} L ${bx} ${by}`;
+  const mx = (ax + bx) / 2;
+  return `M ${ax} ${ay} C ${mx} ${ay}, ${mx} ${by}, ${bx} ${by}`;
+}
+
+const edgeGroup = svg.append('g').attr('class','edges');
+edges.forEach(e => {
+  const a = nodeMap[e.from], b = nodeMap[e.to];
+  if (!a || !b) return;
+  const color = COLORS[a.layer] || '#333';
+
+  const path = edgeGroup.append('path')
+    .attr('d', edgePoints(a, b))
+    .attr('fill','none')
+    .attr('stroke', color)
+    .attr('stroke-width', 1.5)
+    .attr('stroke-opacity', 0.3)
+    .attr('marker-end', `url(#arrow-${a.layer})`)
+    .attr('class', `edge layer-${a.layer}`);
+
+  if (e.label) {
+    const mp = midpoint(a, b);
+    edgeGroup.append('text')
+      .attr('x', mp.x).attr('y', mp.y - 4)
+      .attr('fill', '#2d2d4a').attr('font-size', 8)
+      .attr('font-family','IBM Plex Mono').attr('text-anchor','middle')
+      .attr('class', `edge-label layer-${a.layer}`)
+      .text(e.label);
+  }
+});
+
+// Draw nodes
+const tooltip = document.getElementById('tooltip');
+const detail  = document.getElementById('detail');
+
+function showTooltip(event, d) {
+  const color = COLORS[d.layer];
+  tooltip.innerHTML = `
+    <div class="tooltip-title">
+      <span class="tooltip-accent" style="background:${color}"></span>${d.icon} ${d.title}
+    </div>
+    <div class="tooltip-body">${d.detail.desc}</div>
+    <div class="tooltip-tags">${d.detail.tech.map(t=>`<span class="tooltip-tag">${t}</span>`).join('')}</div>
+  `;
+  tooltip.classList.add('show');
+}
+function moveTooltip(event) {
+  tooltip.style.left = (event.clientX + 14) + 'px';
+  tooltip.style.top  = (event.clientY - 10) + 'px';
+}
+function hideTooltip() { tooltip.classList.remove('show'); }
+
+function showDetail(d) {
+  const color = COLORS[d.layer];
+  detail.innerHTML = `
+    <div class="detail-header">
+      <div class="detail-icon">${d.icon}</div>
+      <div>
+        <div class="detail-phase" style="color:${color}">${d.detail.phase}</div>
+        <div class="detail-title">${d.title}</div>
+      </div>
+      <div class="detail-close" onclick="document.getElementById('detail').classList.remove('show')">✕</div>
+    </div>
+    <div class="detail-body">
+      <div class="detail-section">
+        <h3>Inputs</h3>
+        <ul class="detail-list">${d.detail.inputs.map(i=>`<li><span>${i}</span></li>`).join('')}</ul>
+        <h3 style="margin-top:16px">Outputs</h3>
+        <ul class="detail-list">${d.detail.outputs.map(i=>`<li><span>${i}</span></li>`).join('')}</ul>
+      </div>
+      <div class="detail-section">
+        <h3>Description</h3>
+        <p style="font-size:11px;color:#888ba8;line-height:1.8">${d.detail.desc}</p>
+        <h3 style="margin-top:16px">Technologies</h3>
+        <div class="tech-grid">${d.detail.tech.map(t=>`<span class="tech-chip" style="border-color:${color}33;color:${color}bb">${t}</span>`).join('')}</div>
+      </div>
+    </div>
+  `;
+  detail.classList.add('show');
+  detail.scrollIntoView({ behavior:'smooth', block:'nearest' });
+}
+
+nodes.forEach(d => {
+  const color = COLORS[d.layer];
+  const g = svg.append('g')
+    .attr('class', `node-group layer-${d.layer}`)
+    .attr('transform', `translate(${d.x},${d.y})`)
+    .style('cursor','pointer')
+    .on('mouseenter', (e) => { showTooltip(e, d); d3.select(e.currentTarget).select('rect').attr('filter','brightness(1.4)'); })
+    .on('mousemove', moveTooltip)
+    .on('mouseleave', (e) => { hideTooltip(); d3.select(e.currentTarget).select('rect').attr('filter',null); })
+    .on('click', () => showDetail(d));
+
+  // Background rect
+  g.append('rect')
+    .attr('width', d.w).attr('height', d.h)
+    .attr('rx', 6).attr('ry', 6)
+    .attr('fill', `url(#grad-${d.layer})`)
+    .attr('stroke', color).attr('stroke-width', 1)
+    .attr('stroke-opacity', 0.5);
+
+  // Left accent bar
+  g.append('rect')
+    .attr('width', 3).attr('height', d.h)
+    .attr('rx', 2).attr('fill', color).attr('opacity', 0.8);
+
+  // Icon
+  g.append('text')
+    .attr('x', 18).attr('y', 26)
+    .attr('font-size', 16).attr('dominant-baseline','middle')
+    .text(d.icon);
+
+  // Title
+  g.append('text')
+    .attr('x', 38).attr('y', 22)
+    .attr('fill', '#dde1f0').attr('font-size', 11)
+    .attr('font-weight', 600).attr('font-family','IBM Plex Mono')
+    .text(d.title.length > 18 ? d.title.slice(0,18)+'…' : d.title);
+
+  // Sub
+  g.append('text')
+    .attr('x', 38).attr('y', 38)
+    .attr('fill', color).attr('font-size', 9)
+    .attr('font-family','IBM Plex Mono').attr('opacity', 0.8)
+    .text(d.sub.length > 24 ? d.sub.slice(0,24)+'…' : d.sub);
+
+  // Click hint
+  g.append('text')
+    .attr('x', d.w - 10).attr('y', d.h - 8)
+    .attr('fill', '#2a2a42').attr('font-size', 8)
+    .attr('font-family','IBM Plex Mono').attr('text-anchor','end')
+    .text('click →');
+
+  // Animate in
+  g.attr('opacity', 0)
+    .transition().delay(nodes.indexOf(d) * 40).duration(400).ease(d3.easeQuadOut)
+    .attr('opacity', 1);
+});
+
+// Phase labels
+const phases = [
+  { label:'① DATA', x:80,  color: COLORS.data },
+  { label:'② TRAINING', x:580, color: COLORS.train },
+  { label:'③ INDEX', x:840, color: COLORS.index },
+  { label:'④ AGENT', x:80,  color: COLORS.agent, y:510 },
+  { label:'⑤ INFRA', x:1060, color: COLORS.infra },
+];
+phases.forEach(p => {
+  svg.append('text')
+    .attr('x', p.x).attr('y', p.y || 50)
+    .attr('fill', p.color).attr('opacity', 0.4)
+    .attr('font-size', 9).attr('font-family','IBM Plex Mono')
+    .attr('letter-spacing', 3).attr('font-weight', 600)
+    .text(p.label);
+});
+
+// Layer filter controls
+document.querySelectorAll('.ctrl-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const layer = btn.dataset.layer;
+    document.querySelectorAll('.ctrl-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+
+    if (layer === 'all') {
+      svg.selectAll('.node-group, .edge, .edge-label').transition().duration(300).attr('opacity', 1);
+    } else {
+      svg.selectAll('.node-group').transition().duration(300)
+        .attr('opacity', d => d.layer === layer ? 1 : 0.12);
+      svg.selectAll('.edge').transition().duration(300)
+        .attr('opacity', function() { return this.classList.contains('layer-'+layer) ? 0.9 : 0.05; });
+      svg.selectAll('.edge-label').transition().duration(300)
+        .attr('opacity', function() { return this.classList.contains('layer-'+layer) ? 1 : 0; });
+    }
+  });
+});
+
+// Animate edges in
+edgeGroup.selectAll('path')
+  .attr('stroke-dasharray', function() { return this.getTotalLength(); })
+  .attr('stroke-dashoffset', function() { return this.getTotalLength(); })
+  .transition().delay((d,i) => i * 30 + 400).duration(600)
+  .attr('stroke-dashoffset', 0);
+</script>
+</body>
+</html>
