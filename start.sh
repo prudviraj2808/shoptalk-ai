@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+# set -e
 
 # 1. Critical: Tell Python to look at the root directory for imports
 export PYTHONPATH=$PYTHONPATH:/app
