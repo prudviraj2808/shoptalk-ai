@@ -8,51 +8,6 @@
 👉 [Interactive Architecture](https://prudviraj2808.github.io/shoptalk-ai/)
 
 
-```mermaid
-flowchart TD
-    subgraph P1["① Data Exploration & Preparation  (Offline)"]
-        A1[abo-images-small.tar\nProduct images] --> A3[prepare_training_data.py\nFilter · Clean · Pair]
-        A2[listings.csv\nProduct metadata] --> A3
-        A3 --> A4[shards_tar.py\nWebDataset .tar shards]
-        A2 --> A5[sagemaker_metadata_refinement.py\nLLM metadata enrichment]
-    end
-
-    subgraph P2["② Model Fine-Tuning  (Training)"]
-        B1[MobileCLIP2-S2\npretrained=dfndr2b] --> B2[finetune_mobileclip2_lora_gpu_optimized.py\nContrastive Loss · Mixed Precision]
-        A4 --> B2
-        B2 --> B3[mobileclip2_lora/\nadapter_model.safetensors]
-    end
-
-    subgraph P3["③ Vector Index Generation  (Offline)"]
-        B3 --> C1[embeddings_gpu.py\nBatch encode all images · A10G]
-        C1 --> C2[shoptalk_index.faiss\nIndexIVF · 512-dim · cosine]
-        C1 --> C3[metadata.pkl\nFAISS idx → image filename]
-        C2 --> C4[(S3: vector-index/)]
-        C3 --> C4
-    end
-
-    subgraph P4["④ Agentic Inference Flow  (Runtime)"]
-        D1[User Query\nText or Image] --> D2[ShopTalk Agent\nGoogle ADK · Gemini 2.5 Flash]
-        D2 -->|search_by_text| D3[ProductSearchTool\nencode_text → FAISS search]
-        D2 -->|search_by_image| D3
-        D3 --> D4[Top-3 Image Paths\nsmall/00/filename.jpg]
-        D4 --> D5[FastAPI StaticFiles\nGET /images/small/.../filename.jpg]
-        D2 --> D6[(PostgreSQL + pgvector\nADK Session Storage)]
-    end
-
-    subgraph P5["⑤ CI/CD & Infrastructure  (DevOps)"]
-        E1[Push to main] --> E2[GitHub Actions\ndocker build]
-        E2 --> E3[Amazon ECR\nVersioned image :sha]
-        E3 --> E4[EC2 g5.2xlarge\nA10G GPU]
-        C4 -->|aws s3 sync| E4
-        E4 --> E5[shoptalk-app\nFastAPI · Port 8000]
-        E4 --> E6[shoptalk-db\npgvector:pg16 · Port 5432]
-    end
-
-    P1 --> P2 --> P3 --> P4
-    P5 -.->|serves| P4
-```
-
 ---
 
 ## Stack
@@ -86,7 +41,7 @@ shoptalk-ai/
 │   └── shopping_agent/
 │       └── agent.py              # Google ADK agent + tool definitions
 ├── tools/
-│   └── product_search.py         # ProductSearchTool — FAISS search singleton
+│   └── product_search.py         # ProductSearchTool — FAISS search singleton -- Inferences MobileCLIP2-S2(LORA finetuned)
 ├── utils/
 │   └── database.py               # Async SQLAlchemy engine + pgvector init
 ├── train/
