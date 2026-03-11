@@ -24,7 +24,7 @@ services:
     container_name: shoptalk-app
     restart: unless-stopped
     # Use the script we fixed
-    command: ["./start.sh"]
+    command: ["sh", "./start.sh"]
     ports:
       - "8000:8000"
     env_file:
